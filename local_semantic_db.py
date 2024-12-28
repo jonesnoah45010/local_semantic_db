@@ -2,6 +2,7 @@ from sentence_transformers import SentenceTransformer
 import chromadb
 import uuid
 from pathlib import Path
+from semantic_text_splitter import text_splitter
 
 class local_semantic_db:
     def __init__(self, persist_directory="chroma_db",collection_name="my_collection",sentence_transformer_name='all-MiniLM-L6-v2'):
@@ -34,6 +35,9 @@ class local_semantic_db:
         return self.embedding_model.encode(text).tolist()
 
     def embed_texts(self, texts, batch_size=16, show_progress_bar=True):
+        """
+        Generate embeddings for all the input texts using the embedding model.
+        """
         return self.embedding_model.encode(texts, batch_size=batch_size, show_progress_bar=show_progress_bar).tolist()
 
 
@@ -108,6 +112,38 @@ class local_semantic_db:
 
         print(f"Upserted {len(texts)} texts into the database.")
         return text_ids
+
+
+    def insert_in_chunks(self, text, metadata=None, text_id=None, max_sentences_per_chunk=42):
+        """
+        Add or update an entry in chunks to the database efficiently. Useful for large bodies of text.
+        upon chunking, each chunk will have the same associated metadata, however, an "index" key will
+        be added and will an int from 0 to len(chunks).  Each chunk will also have the same unique 
+        text_id identifier, however "-<index>" will be appended to make each unique. i.e. if the text_id
+        is "unique_id", then then each chunk will have a unique_id of "unique_id-0", "unique_id-1",etc...
+        :param text: text content to be stored.
+        :param metadata: metadata dictionary for text.
+        :param text_id: unique identifier for the text.
+        """
+        texts = text_splitter(text, max_sentences_per_chunk=max_sentences_per_chunk)
+        metadatas = []
+        text_ids = []
+        for i in range(len(texts)):
+            if metadata is not None:
+                m = eval(repr(metadata))
+                m["index"] = i
+                metadatas.append(m)
+            if text_id is not None:
+                t = text_id + "-" + str(i)
+                text_ids.append(t)
+
+        if metadatas == []:
+            metadatas = None
+        if text_ids == []:
+            text_ids = None
+
+        return self.batch_insert(self, texts=texts, metadatas=metadatas, text_ids=text_ids)
+
 
 
     def query(self, query_text, top_k=5, where=None):
@@ -213,24 +249,31 @@ if __name__ == "__main__":
     # Initialize DB
     db = local_semantic_db(collection_name="interests")
 
-    # # Insert some entries
-    # db.insert("I enjoy hiking and mountain climbing.", metadata={"name": "Alice"})
-    # db.insert("Swimming and running are my favorite activities.", metadata={"name": "Bob"})
-    # db.insert("I love reading books and watching movies.", metadata={"name": "Charlie"})
-    # db.insert("I like working out and running.", metadata={"name": "Charlie"})
-
-
-    texts = ['An article about football and soccer', 'An article about baseball', 'A detailed explanation of quantum mechanics', 'A guide to making the perfect lasagna', 'Exploring the beaches in Hawaii', 'Advice on cardio workouts and staying fit']
-    metadatas = [{'name': 'Sports Article', 'category': 'sports', 'page_number': 12}, {'name': 'Sports Article 2', 'category': 'sports', 'page_number': 13}, {'name': 'Science News', 'category': 'science', 'page_number': 45}, {'name': 'Cooking Tips', 'category': 'cooking', 'page_number': 30}, {'name': 'Travel Guide', 'category': 'travel', 'page_number': 70}, {'name': 'Fitness Tips', 'category': 'fitness', 'page_number': 15}]
-    text_ids = None
-
+    texts = [
+        'An article about football and soccer',
+        'An article about baseball',
+        'A detailed explanation of quantum mechanics',
+        'A guide to making the perfect lasagna',
+        'Exploring the beaches in Hawaii',
+        'Advice on cardio workouts and staying fit'
+    ]
+    metadatas = [
+        {'name': 'Sports Article', 'category': 'sports', 'page_number': 12},
+        {'name': 'Sports Article 2', 'category': 'sports', 'page_number': 12},
+        {'name': 'Science News', 'category': 'science', 'page_number': 45},
+        {'name': 'Cooking Tips', 'category': 'cooking', 'page_number': 30},
+        {'name': 'Travel Guide', 'category': 'travel', 'page_number': 70},
+        {'name': 'Fitness Tips', 'category': 'fitness', 'page_number': 13}
+    ]
 
     # Insert multiple entries using batch_insert
-    db.batch_insert(texts=texts, metadatas=metadatas, text_ids=text_ids)
+    db.batch_insert(texts=texts, metadatas=metadatas)
+
 
     # Query for similar entries related to 'physical activity'
-    query_result = db.query("physical activity, sports, and fitness", top_k=2)
-    query_result_filter = db.query("physical activity, sports, and fitness", top_k=1, where={"name":"Charlie"})
+    query_result = db.query("physical activity, sports, and fitness", top_k=4)
+    query_result_filter = db.query("physical activity, sports, and fitness", top_k=4, where={"page_number":12})
+    query_result_filter_multiple = db.query("physical activity, sports, and fitness", top_k=4, where={"page_number": {"$in": [12, 13]}})
 
     print("\nwithout filter...\n")
     print(query_result)
@@ -238,12 +281,8 @@ if __name__ == "__main__":
     print("\nwith filter...\n")
     print(query_result_filter)
 
-
-
-
-
-
-
+    print("\nwith filter multiple...\n")
+    print(query_result_filter_multiple)
 
 
 
